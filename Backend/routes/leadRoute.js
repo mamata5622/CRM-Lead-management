@@ -7,22 +7,23 @@ const {
   getallLeads,
   deleteLead,
 } = require("../controllers/leadController");
+const { isLoginUser, isAdmin } = require("../middleware/authMiddleware");
 
 const leadRoutes = express.Router();
 
 // CREATE
-leadRoutes.post("/create", createLead);
+leadRoutes.post("/create",isLoginUser,isAdmin, createLead);
 
 // GET ALL
-leadRoutes.get("/", getallLeads);
+leadRoutes.get("/",isLoginUser,isAdmin, getallLeads);
 
 // GET ONE
-leadRoutes.get("/:id", getLeadById);
+leadRoutes.get("/:id",isLoginUser,isAdmin, getLeadById);
 
 // UPDATE
-leadRoutes.put("/:id", updateLead);
+leadRoutes.put("/:id",isLoginUser,isAdmin, updateLead);
 
 // DELETE
-leadRoutes.delete("/:id", deleteLead);
+leadRoutes.delete("/:id",isLoginUser,isAdmin, deleteLead);
 
 module.exports = leadRoutes;
