@@ -3,7 +3,9 @@ const User = require("../models/userModel");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
-// Generate JWT token
+// =====================================
+// GENERATE JWT TOKEN
+// =====================================
 const generateToken = (user) => {
   if (!process.env.JWT_SECRET_KEY) {
     throw new Error("JWT_SECRET_KEY is not configured");
@@ -21,9 +23,12 @@ const generateToken = (user) => {
   );
 };
 
-// Return safe user data without password
+// =====================================
+// SAFE USER RESPONSE
+// Never return password or password hash
+// =====================================
 const userResponse = (user) => ({
-  id: user._id,
+  id: user._id.toString(),
   name: user.name,
   email: user.email,
   role: user.role,
@@ -73,7 +78,7 @@ const register = async (req, res) => {
       });
     }
 
-    // Validate password
+    // Validate password length
     if (password.length < 8) {
       return res.status(400).json({
         success: false,
@@ -81,7 +86,7 @@ const register = async (req, res) => {
       });
     }
 
-    // bcrypt only processes up to 72 bytes of a password
+    // bcrypt supports a maximum of 72 UTF-8 bytes
     if (Buffer.byteLength(password, "utf8") > 72) {
       return res.status(400).json({
         success: false,
@@ -89,7 +94,7 @@ const register = async (req, res) => {
       });
     }
 
-    // Check whether the email already exists
+    // Check whether email already exists
     const existingUser = await User.findOne({
       email: normalizedEmail,
     });
@@ -151,7 +156,7 @@ const login = async (req, res) => {
   try {
     const { email, password } = req.body || {};
 
-    // Validate input
+    // Validate required fields
     if (
       typeof email !== "string" ||
       typeof password !== "string" ||
@@ -166,12 +171,13 @@ const login = async (req, res) => {
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    // Password is excluded by default in the model,
-    // so explicitly include it for password comparison.
+    // Explicitly select password if excluded by the model
     const user = await User.findOne({
       email: normalizedEmail,
     }).select("+password");
 
+    // Use a generic message to avoid revealing whether
+    // an email address is registered
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -187,7 +193,7 @@ const login = async (req, res) => {
       });
     }
 
-    // Compare submitted password with hashed password
+    // Compare submitted password with stored hash
     const passwordMatches = await bcrypt.compare(
       password,
       user.password
@@ -200,14 +206,26 @@ const login = async (req, res) => {
       });
     }
 
-    // Generate token only after successful authentication
+    // Generate token after successful authentication
     const token = generateToken(user);
 
-    // Redirect according to the database role
-    const redirectTo =
-      user.role === "admin"
-        ? "/admin/dashboard"
-        : "/dashboard";
+    // Redirect based on the role stored in MongoDB
+    const role = String(user.role || "user").trim().toLowerCase();
+
+    const roleRoutes = {
+      admin: "/admin/dashboard",
+      employee: "/employee/dashboard",
+      user: "/dashboard",
+    };
+
+    const redirectTo = roleRoutes[role];
+
+    if (!redirectTo) {
+      return res.status(403).json({
+        success: false,
+        message: "Your account role is not recognized. Contact an administrator.",
+      });
+    }
 
     return res.status(200).json({
       success: true,
@@ -227,6 +245,9 @@ const login = async (req, res) => {
   }
 };
 
+// =====================================
+// EXPORT CONTROLLERS
+// =====================================
 module.exports = {
   register,
   login,

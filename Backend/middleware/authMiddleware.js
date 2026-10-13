@@ -10,6 +10,7 @@ const isLoginUser = async (req, res, next) => {
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.status(401).json({
         success: false,
+        code: "AUTH_REQUIRED",
         message: "Please login first",
       });
     }
@@ -26,17 +27,26 @@ const isLoginUser = async (req, res, next) => {
     if (!user || !user.isActive) {
       return res.status(401).json({
         success: false,
+        code: "ACCOUNT_INACTIVE",
         message: "User not found or account is inactive",
       });
     }
 
     req.user = user;
-
     next();
   } catch (error) {
+    if (error.name === "TokenExpiredError") {
+      return res.status(401).json({
+        success: false,
+        code: "TOKEN_EXPIRED",
+        message: "Your session has expired. Please login again.",
+      });
+    }
+
     return res.status(401).json({
       success: false,
-      message: "Invalid or expired token",
+      code: "INVALID_TOKEN",
+      message: "Invalid token. Please login again.",
     });
   }
 };
@@ -60,7 +70,27 @@ const isAdmin = (req, res, next) => {
   next();
 };
 
+// 3. Check whether the logged-in user is an employee
+const isEmployee = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      message: "Please login first",
+    });
+  }
+
+  if (req.user.role !== "employee") {
+    return res.status(403).json({
+      success: false,
+      message: "Access denied. Employee only.",
+    });
+  }
+
+  next();
+};
+
 module.exports = {
   isLoginUser,
   isAdmin,
+  isEmployee,
 };

@@ -1,6 +1,6 @@
-
 import React, { useState } from "react";
 import axios from "axios";
+import { toast } from "react-toastify";
 import {
   FiUser,
   FiPhone,
@@ -33,6 +33,12 @@ const Register = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // Show an error both inline and through React Toastify.
+  const showError = (message) => {
+    setError(message);
+    toast.error(message);
+  };
+
   const handleChange = (e) => {
     const { name, value } = e.target;
 
@@ -41,7 +47,9 @@ const Register = () => {
       [name]: value,
     }));
 
-    if (error) setError("");
+    if (error) {
+      setError("");
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -55,92 +63,109 @@ const Register = () => {
     const password = formData.password;
     const confirmPassword = formData.confirmPassword;
 
+    // Validate name
     if (!name) {
-      setError("Please enter your full name.");
+      showError("Please enter your full name.");
       return;
     }
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setError("Please enter a valid email address.");
+    if (name.length > 100) {
+      showError("Name cannot exceed 100 characters.");
       return;
     }
 
+    // Validate email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!emailRegex.test(email)) {
+      showError("Please enter a valid email address.");
+      return;
+    }
+
+    // Validate password
     if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
+      showError("Password must be at least 8 characters.");
+      return;
+    }
+
+    if (new TextEncoder().encode(password).length > 72) {
+      showError("Password cannot exceed 72 bytes.");
       return;
     }
 
     if (password !== confirmPassword) {
-      setError("Passwords do not match.");
+      showError("Passwords do not match.");
       return;
     }
 
+    // Validate optional profile image URL
     if (profileImage) {
       try {
         const url = new URL(profileImage);
+
         if (!["http:", "https:"].includes(url.protocol)) {
           throw new Error("Invalid URL");
         }
       } catch {
-        setError("Please enter a valid profile image URL.");
+        showError("Please enter a valid profile image URL.");
         return;
       }
     }
 
+    // Validate API configuration
     if (!API_BASE_URL) {
-      setError("API URL is missing. Please check your .env file.");
+      showError("API URL is missing. Please check your .env file.");
       return;
     }
 
     setLoading(true);
 
     try {
-      const response = await axios.post(
-        `${API_BASE_URL}/auth/register`,
-        {
-          name,
-          phone: phone || null,
-          email,
-          profileImage: profileImage || null,
-          password,
-        }
-      );
+      const response = await axios.post(`${API_BASE_URL}/auth/register`, {
+        name,
+        phone: phone || null,
+        email,
+        profileImage: profileImage || null,
+        password,
+      });
 
-      const message =
-        response.data?.message || "Registration successful!";
+      const message = response.data?.message || "Registration successful!";
+      const user = response.data?.user;
 
-      // If your backend returns a token, sign the user in.
-      if (response.data?.token && response.data?.user) {
+      // If the backend returns a token and user, log them in.
+      if (response.data?.token && user) {
         localStorage.setItem("token", response.data.token);
-        localStorage.setItem(
-          "user",
-          JSON.stringify(response.data.user)
-        );
+        localStorage.setItem("user", JSON.stringify(user));
 
-        const user = response.data.user;
+        const role = String(user.role || "user").toLowerCase();
+
+        const roleRoutes = {
+          admin: "/admin/dashboard",
+          employee: "/employee/dashboard",
+          user: "/dashboard",
+        };
+
         const destination =
-          response.data.redirectTo ||
-          (user.role === "admin"
-            ? "/admin/dashboard"
-            : "/dashboard");
+          response.data.redirectTo || roleRoutes[role] || "/dashboard";
 
-        navigate(destination, {
-          replace: true,
-          state: { loginMessage: message },
-        });
+        toast.success(message);
+        navigate(destination, { replace: true });
       } else {
-        // Otherwise, redirect to login after registration.
+        // Registration succeeded, but the backend did not return a login token.
+        toast.success(message);
+
         navigate("/login", {
           replace: true,
           state: { registrationMessage: message },
         });
       }
     } catch (err) {
-      setError(
+      const message =
         err.response?.data?.message ||
-          err.response?.data?.error ||
-          "Unable to create your account. Please try again."
-      );
+        err.response?.data?.error ||
+        "Unable to create your account. Please try again.";
+
+      showError(message);
     } finally {
       setLoading(false);
     }
@@ -149,13 +174,11 @@ const Register = () => {
   const inputClass =
     "w-full rounded-xl border border-slate-200 bg-white py-3 pl-11 pr-12 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 disabled:cursor-not-allowed disabled:opacity-60";
 
-  const labelClass =
-    "mb-2 block text-sm font-medium text-slate-700";
+  const labelClass = "mb-2 block text-sm font-medium text-slate-700";
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-8 sm:px-6">
       <div className="grid w-full max-w-5xl overflow-hidden rounded-3xl bg-white shadow-xl shadow-slate-200/70 lg:grid-cols-2">
-
         {/* Left panel */}
         <div className="relative hidden flex-col justify-between overflow-hidden bg-indigo-600 p-10 text-white lg:flex">
           <div className="absolute -right-20 -top-20 h-72 w-72 rounded-full bg-white/10" />
@@ -180,25 +203,23 @@ const Register = () => {
             </h1>
 
             <p className="mt-5 max-w-sm leading-7 text-indigo-100">
-              Create your account to manage your business,
-              connect with opportunities, and access your
-              personalized workspace.
+              Create your account to manage your business, connect with
+              opportunities, and access your personalized workspace.
             </p>
           </div>
 
           <div className="relative z-10 rounded-2xl border border-white/20 bg-white/10 p-5">
             <p className="font-semibold">Simple and secure</p>
             <p className="mt-1 text-sm text-indigo-100">
-              Join BusinessHub and get started with your
-              personalized business dashboard.
+              Join BusinessHub and get started with your personalized business
+              dashboard.
             </p>
           </div>
         </div>
 
-        {/* Register form */}
+        {/* Registration form */}
         <div className="px-5 py-8 sm:px-10 sm:py-10 lg:px-12">
           <div className="mx-auto w-full max-w-md">
-
             {/* Mobile logo */}
             <div className="mb-8 flex items-center gap-3 lg:hidden">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-lg font-bold text-white">
@@ -224,23 +245,19 @@ const Register = () => {
               </p>
             </div>
 
-            {/* Error message */}
+            {/* Inline error */}
             {error && (
               <div
                 role="alert"
                 aria-live="polite"
                 className="mb-6 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
               >
-                <FiAlertCircle
-                  className="mt-0.5 shrink-0"
-                  size={18}
-                />
+                <FiAlertCircle className="mt-0.5 shrink-0" size={18} />
                 <p>{error}</p>
               </div>
             )}
 
             <form onSubmit={handleSubmit} className="space-y-4">
-
               {/* Full name */}
               <div>
                 <label htmlFor="name" className={labelClass}>
@@ -262,6 +279,7 @@ const Register = () => {
                     value={formData.name}
                     onChange={handleChange}
                     className={inputClass}
+                    maxLength={100}
                     required
                     disabled={loading}
                   />
@@ -326,10 +344,7 @@ const Register = () => {
 
               {/* Profile image */}
               <div>
-                <label
-                  htmlFor="profileImage"
-                  className={labelClass}
-                >
+                <label htmlFor="profileImage" className={labelClass}>
                   Profile image URL
                   <span className="ml-1 font-normal text-slate-400">
                     (Optional)
@@ -383,13 +398,12 @@ const Register = () => {
 
                   <button
                     type="button"
-                    onClick={() =>
-                      setShowPassword((prev) => !prev)
-                    }
+                    onClick={() => setShowPassword((prev) => !prev)}
                     aria-label={
                       showPassword ? "Hide password" : "Show password"
                     }
                     className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-slate-700"
+                    disabled={loading}
                   >
                     {showPassword ? (
                       <FiEyeOff size={18} />
@@ -402,10 +416,7 @@ const Register = () => {
 
               {/* Confirm password */}
               <div>
-                <label
-                  htmlFor="confirmPassword"
-                  className={labelClass}
-                >
+                <label htmlFor="confirmPassword" className={labelClass}>
                   Confirm password
                 </label>
 
@@ -436,9 +447,7 @@ const Register = () => {
                 <input
                   type="checkbox"
                   checked={showPassword}
-                  onChange={(e) =>
-                    setShowPassword(e.target.checked)
-                  }
+                  onChange={(e) => setShowPassword(e.target.checked)}
                   className="h-4 w-4 accent-indigo-600"
                   disabled={loading}
                 />
@@ -453,10 +462,7 @@ const Register = () => {
               >
                 {loading ? (
                   <>
-                    <FiLoader
-                      className="animate-spin"
-                      size={18}
-                    />
+                    <FiLoader className="animate-spin" size={18} />
                     Creating account...
                   </>
                 ) : (
@@ -480,8 +486,8 @@ const Register = () => {
             </p>
 
             <p className="mt-5 text-center text-xs leading-5 text-slate-400">
-              By creating an account, you agree to your
-              applicable terms of service and privacy policy.
+              By creating an account, you agree to your applicable terms of
+              service and privacy policy.
             </p>
           </div>
         </div>

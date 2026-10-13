@@ -1,59 +1,58 @@
-const mongoose=require("mongoose")
+const mongoose = require("mongoose");
 
 const leadSchema = new mongoose.Schema(
   {
     id: {
       type: Number,
-      required: true,
       unique: true,
+      required: true,
     },
 
     name: {
       type: String,
-      required: true,
+      required: [true, "Lead name is required"],
       trim: true,
     },
 
     company: {
       type: String,
-      required: true,
+      default: "",
       trim: true,
     },
 
     phone: {
       type: String,
-      required: true,
+      default: "",
       trim: true,
     },
 
     email: {
       type: String,
-      required: true,
-      lowercase: true,
+      default: "",
       trim: true,
+      lowercase: true,
     },
 
     location: {
       type: String,
-      required: true,
+      default: "",
       trim: true,
     },
 
     vertical: {
       type: String,
-      required: true,
+      default: "Real Estate",
       trim: true,
     },
 
     source: {
       type: String,
-      required: true,
+      default: "Website",
       trim: true,
     },
 
     status: {
       type: String,
-      required: true,
       enum: [
         "New",
         "Contacted",
@@ -68,38 +67,49 @@ const leadSchema = new mongoose.Schema(
 
     value: {
       type: Number,
-      required: true,
+      default: 0,
       min: 0,
     },
 
     followUp: {
       type: Date,
-      required: true,
+      default: null,
     },
 
     owner: {
       type: String,
-      required: true,
+      default: "Unassigned",
       trim: true,
+    },
+
+    initials: {
+      type: String,
+      default: "",
     },
 
     overdue: {
       type: Boolean,
       default: false,
     },
-
-    initials: {
-      type: String,
-      required: true,
-      uppercase: true,
-      trim: true,
-    },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-const Lead = mongoose.model("Lead", leadSchema);
+leadSchema.pre("validate", function () {
+  if (this.name && !this.initials) {
+    this.initials = this.name
+      .trim()
+      .split(/\s+/)
+      .map((part) => part[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase();
+  }
 
-module.exports = Lead;
+  // Support the frontend label without violating the schema enum.
+  if (this.status === "Proposal Sent") {
+    this.status = "Proposal";
+  }
+});
+
+module.exports = mongoose.model("Lead", leadSchema);
