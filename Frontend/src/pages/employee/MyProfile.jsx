@@ -46,7 +46,7 @@ const MyProfile = () => {
       try {
         // Create this endpoint in your backend as described below.
         const { data } = await axios.get(
-          `${API_BASE_URL}/employee/profile`,
+          `${API_BASE_URL}/emp/profile`,
           authConfig
         );
 

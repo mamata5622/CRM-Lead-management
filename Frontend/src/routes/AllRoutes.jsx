@@ -51,6 +51,7 @@ function AllRoutes() {
         <Route path="follow-ups" element={<AdminFollowup />} />
 
         <Route path="role-management" element={<RoleManagement/>}/>
+        
       </Route>
 
       <Route path="/employee" element={<EmployeeLayout/>}>

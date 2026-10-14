@@ -1,5 +1,11 @@
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import axios from "axios";
 import { useNavigate } from "react-router";
 import { toast } from "react-toastify";
@@ -21,16 +27,27 @@ import {
   FiUser,
   FiTrendingUp,
   FiActivity,
+  FiExternalLink,
 } from "react-icons/fi";
 
 // --------------------------------------------------
 // API configuration
 // --------------------------------------------------
 
-const API_BASE_URL = import.meta.env.VITE_BASE_URL;
+const API_BASE_URL = String(import.meta.env.VITE_BASE_URL || "")
+  .trim()
+  .replace(/\/+$/, "");
+
+const LEADS_URL = `${API_BASE_URL}/leads`;
+const FOLLOWUPS_URL = `${API_BASE_URL}/admin/follow-ups`;
+
+const getToken = () =>
+  localStorage.getItem("token") ||
+  localStorage.getItem("adminToken") ||
+  "";
 
 const getAuthConfig = () => {
-  const token = localStorage.getItem("token");
+  const token = getToken();
 
   return {
     headers: token
@@ -39,14 +56,32 @@ const getAuthConfig = () => {
   };
 };
 
-// Support APIs that return either an array or a paginated object.
+// Handles arrays and common Express/Mongoose response wrappers:
+// [], { leads: [] }, { data: [] }, { data: { leads: [] } }, etc.
 const extractArray = (response, possibleKeys = []) => {
   if (Array.isArray(response)) return response;
+  if (!response || typeof response !== "object") return [];
 
   for (const key of possibleKeys) {
-    if (Array.isArray(response?.[key])) {
-      return response[key];
+    if (Array.isArray(response[key])) return response[key];
+  }
+
+  if (Array.isArray(response.data)) return response.data;
+
+  if (response.data && typeof response.data === "object") {
+    for (const key of possibleKeys) {
+      if (Array.isArray(response.data[key])) {
+        return response.data[key];
+      }
     }
+
+    if (Array.isArray(response.data.data)) {
+      return response.data.data;
+    }
+  }
+
+  if (response.result && Array.isArray(response.result)) {
+    return response.result;
   }
 
   return [];
@@ -54,7 +89,8 @@ const extractArray = (response, possibleKeys = []) => {
 
 const getStoredUser = () => {
   try {
-    return JSON.parse(localStorage.getItem("user") || "{}");
+    const parsed = JSON.parse(localStorage.getItem("user") || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
   }
@@ -75,55 +111,34 @@ const getLeadName = (lead) =>
 const getFollowUpDate = (item) =>
   item?.dueDate || item?.followUp || item?.followUpDate || null;
 
-const formatDate = (date) => {
+const parseDate = (value) => {
+  if (!value) return null;
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const formatDate = (value) => {
+  const date = parseDate(value);
   if (!date) return "Not scheduled";
 
-  const parsed = new Date(date);
-
-  if (Number.isNaN(parsed.getTime())) return "Not scheduled";
-
-  return parsed.toLocaleDateString("en-IN", {
+  return date.toLocaleDateString("en-IN", {
     day: "numeric",
     month: "short",
     year: "numeric",
   });
 };
 
-const formatDateTime = (date) => {
+const formatDateTime = (value) => {
+  const date = parseDate(value);
   if (!date) return "Not scheduled";
 
-  const parsed = new Date(date);
-
-  if (Number.isNaN(parsed.getTime())) return "Not scheduled";
-
-  return parsed.toLocaleString("en-IN", {
+  return date.toLocaleString("en-IN", {
     day: "numeric",
     month: "short",
     hour: "numeric",
     minute: "2-digit",
   });
-};
-
-const getStatusClass = (status = "") => {
-  const normalized = status.toLowerCase();
-
-  if (["won", "completed"].includes(normalized)) {
-    return "bg-emerald-50 text-emerald-700";
-  }
-
-  if (["lost", "cancelled"].includes(normalized)) {
-    return "bg-red-50 text-red-700";
-  }
-
-  if (["negotiation", "proposal sent", "proposal"].includes(normalized)) {
-    return "bg-violet-50 text-violet-700";
-  }
-
-  if (["qualified", "in progress", "contacted"].includes(normalized)) {
-    return "bg-blue-50 text-blue-700";
-  }
-
-  return "bg-amber-50 text-amber-700";
 };
 
 const formatCurrency = (value) => {
@@ -139,6 +154,41 @@ const formatCurrency = (value) => {
   }).format(amount);
 };
 
+const normalizeStatus = (status) =>
+  String(status || "New").trim().toLowerCase();
+
+const getStatusClass = (status = "") => {
+  const normalized = normalizeStatus(status);
+
+  if (["won", "completed"].includes(normalized)) {
+    return "bg-emerald-50 text-emerald-700";
+  }
+
+  if (["lost", "cancelled"].includes(normalized)) {
+    return "bg-red-50 text-red-700";
+  }
+
+  if (
+    ["negotiation", "proposal sent", "proposal"].includes(normalized)
+  ) {
+    return "bg-violet-50 text-violet-700";
+  }
+
+  if (
+    ["qualified", "in progress", "contacted"].includes(normalized)
+  ) {
+    return "bg-blue-50 text-blue-700";
+  }
+
+  return "bg-amber-50 text-amber-700";
+};
+
+const isClosedFollowUp = (item) =>
+  ["completed", "cancelled"].includes(normalizeStatus(item?.status));
+
+const isClosedLead = (lead) =>
+  ["won", "lost"].includes(normalizeStatus(lead?.status));
+
 // --------------------------------------------------
 // Reusable components
 // --------------------------------------------------
@@ -146,7 +196,7 @@ const formatCurrency = (value) => {
 function SectionHeading({ title, subtitle, action, onAction }) {
   return (
     <div className="flex items-start justify-between gap-3">
-      <div>
+      <div className="min-w-0">
         <h2 className="text-base font-bold text-slate-900 sm:text-lg">
           {title}
         </h2>
@@ -185,22 +235,22 @@ function StatCard({
     <button
       type="button"
       onClick={onClick}
-      className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md sm:p-5"
+      className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:p-5"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-medium text-slate-500">{title}</p>
 
           {loading ? (
-            <div className="mt-3 h-9 w-16 animate-pulse rounded-lg bg-slate-100" />
+            <div className="mt-3 h-9 w-24 animate-pulse rounded-lg bg-slate-100" />
           ) : (
-            <p className="mt-2 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+            <p className="mt-2 break-words text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
               {value}
             </p>
           )}
         </div>
 
-        <div className={`rounded-xl p-3 ${iconClass}`}>
+        <div className={`shrink-0 rounded-xl p-3 ${iconClass}`}>
           <Icon size={21} />
         </div>
       </div>
@@ -235,6 +285,8 @@ function EmptyState({ icon: Icon, title, description }) {
 
 export default function EmployeeDashboard() {
   const navigate = useNavigate();
+  const requestRef = useRef(null);
+  const mountedRef = useRef(false);
 
   const [user, setUser] = useState(getStoredUser);
   const [leads, setLeads] = useState([]);
@@ -243,6 +295,7 @@ export default function EmployeeDashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [apiError, setApiError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState(null);
 
   const employeeName = getEmployeeName(user);
 
@@ -251,109 +304,181 @@ export default function EmployeeDashboard() {
 
     if (hour < 12) return "Good morning";
     if (hour < 17) return "Good afternoon";
-
     return "Good evening";
   }, []);
 
-  // ------------------------------------------------
-  // Load live data from existing APIs
-  // ------------------------------------------------
-
-  const fetchDashboardData = useCallback(
-    async ({ showLoading = true } = {}) => {
-      if (!API_BASE_URL) {
-        setApiError(
-          "VITE_BASE_URL is missing. Configure your frontend environment."
-        );
-        setLoading(false);
-        setRefreshing(false);
-        return;
-      }
-
-      if (!localStorage.getItem("token")) {
-        setApiError("Your session token is missing. Please log in again.");
-        setLoading(false);
-        setRefreshing(false);
-        return;
-      }
-
-      if (showLoading) setLoading(true);
-
-      setApiError("");
-
-      try {
-        const config = getAuthConfig();
-
-        // Existing API routes discussed for this project:
-        // GET  /leads
-        // GET  /admin/follow-ups
-        const results = await Promise.allSettled([
-          axios.get(`${API_BASE_URL}/leads`, config),
-          axios.get(`${API_BASE_URL}/admin/follow-ups`, config),
-        ]);
-
-        const [leadsResult, followUpsResult] = results;
-
-        if (leadsResult.status === "fulfilled") {
-          const leadData = extractArray(leadsResult.value.data, [
-            "leads",
-            "data",
-            "results",
-          ]);
-
-          setLeads(leadData);
-        }
-
-        if (followUpsResult.status === "fulfilled") {
-          const followUpData = extractArray(followUpsResult.value.data, [
-            "followUps",
-            "followups",
-            "data",
-            "results",
-          ]);
-
-          setFollowUps(followUpData);
-        }
-
-        const failures = results.filter(
-          (result) => result.status === "rejected"
-        );
-
-        if (failures.length === 2) {
-          setApiError(
-            "Unable to load dashboard data. Check your API routes and authentication."
-          );
-        } else if (failures.length === 1) {
-          const failedIndex = results.findIndex(
-            (result) => result.status === "rejected"
-          );
-
-          setApiError(
-            failedIndex === 0
-              ? "Leads could not be loaded. Follow-up data may still be available."
-              : "Follow-ups could not be loaded. Lead data may still be available."
-          );
-        }
-      } catch (error) {
-        console.error("Employee dashboard error:", error);
-
-        setApiError(
-          error.response?.data?.message ||
-            "An unexpected error occurred while loading your dashboard."
-        );
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    },
+  const todayLabel = useMemo(
+    () =>
+      new Date().toLocaleDateString("en-IN", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      }),
     []
   );
 
+  // ------------------------------------------------
+  // Session expiry
+  // ------------------------------------------------
+
+  const handleExpiredSession = useCallback(() => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("adminToken");
+    localStorage.removeItem("user");
+    localStorage.removeItem("role");
+
+    toast.error("Your session has expired. Please log in again.");
+    navigate("/login", { replace: true });
+  }, [navigate]);
+
+  // ------------------------------------------------
+  // Load live dashboard data
+  // ------------------------------------------------
+
+  const fetchDashboardData = useCallback(
+    async ({ showLoading = true, notify = false } = {}) => {
+      if (!API_BASE_URL) {
+        const message =
+          "VITE_BASE_URL is missing. Configure it in your frontend .env file.";
+
+        setApiError(message);
+        setLoading(false);
+        setRefreshing(false);
+
+        if (notify) toast.error(message);
+        return;
+      }
+
+      if (!getToken()) {
+        setApiError("Your session token is missing. Please log in again.");
+        setLoading(false);
+        setRefreshing(false);
+        navigate("/login", { replace: true });
+        return;
+      }
+
+      // Reuse an in-progress request instead of starting duplicates.
+      if (requestRef.current) return requestRef.current;
+
+      if (showLoading) setLoading(true);
+      setApiError("");
+
+      const request = (async () => {
+        try {
+          const config = getAuthConfig();
+
+          const results = await Promise.allSettled([
+            axios.get(LEADS_URL, config),
+            axios.get(FOLLOWUPS_URL, config),
+          ]);
+
+          if (!mountedRef.current) return;
+
+          const authFailure = results.some(
+            (result) =>
+              result.status === "rejected" &&
+              result.reason?.response?.status === 401
+          );
+
+          if (authFailure) {
+            handleExpiredSession();
+            return;
+          }
+
+          const [leadsResult, followUpsResult] = results;
+          const failures = results.filter(
+            (result) => result.status === "rejected"
+          );
+
+          if (leadsResult.status === "fulfilled") {
+            const leadData = extractArray(leadsResult.value.data, [
+              "leads",
+              "results",
+              "items",
+            ]);
+
+            setLeads(leadData);
+          }
+
+          if (followUpsResult.status === "fulfilled") {
+            const followUpData = extractArray(followUpsResult.value.data, [
+              "followUps",
+              "followups",
+              "results",
+              "items",
+            ]);
+
+            setFollowUps(followUpData);
+          }
+
+          if (failures.length === 2) {
+            const message =
+              "Unable to load dashboard data. Check your API routes, server, and permissions.";
+
+            setApiError(message);
+            if (notify) toast.error(message);
+            return;
+          }
+
+          if (failures.length === 1) {
+            const failedIndex = results.findIndex(
+              (result) => result.status === "rejected"
+            );
+
+            const message =
+              failedIndex === 0
+                ? "Leads could not be loaded. Showing any available follow-up data."
+                : "Follow-ups could not be loaded. Showing any available lead data.";
+
+            setApiError(message);
+            if (notify) toast.warning(message);
+          } else {
+            setApiError("");
+            setLastUpdated(new Date());
+
+            if (notify) toast.success("Dashboard refreshed successfully.");
+          }
+        } catch (error) {
+          console.error("Employee dashboard error:", error);
+
+          if (error?.response?.status === 401) {
+            handleExpiredSession();
+            return;
+          }
+
+          const message =
+            error?.response?.data?.message ||
+            "An unexpected error occurred while loading your dashboard.";
+
+          if (mountedRef.current) setApiError(message);
+          if (notify) toast.error(message);
+        } finally {
+          requestRef.current = null;
+
+          if (mountedRef.current) {
+            setLoading(false);
+            setRefreshing(false);
+          }
+        }
+      })();
+
+      requestRef.current = request;
+      return request;
+    },
+    [handleExpiredSession, navigate]
+  );
+
   useEffect(() => {
+    mountedRef.current = true;
     fetchDashboardData();
+
+    return () => {
+      mountedRef.current = false;
+    };
   }, [fetchDashboardData]);
 
-  // Update user information when another part of the app changes it.
+  // Refresh profile when another part of the app updates it.
   useEffect(() => {
     const refreshUser = () => setUser(getStoredUser());
 
@@ -367,8 +492,10 @@ export default function EmployeeDashboard() {
   }, []);
 
   const handleRefresh = async () => {
+    if (requestRef.current) return;
+
     setRefreshing(true);
-    await fetchDashboardData({ showLoading: false });
+    await fetchDashboardData({ showLoading: false, notify: true });
   };
 
   // ------------------------------------------------
@@ -383,50 +510,32 @@ export default function EmployeeDashboard() {
     const tomorrow = new Date(todayStart);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    const activeLeads = leads.filter(
-      (lead) =>
-        !["won", "lost"].includes(
-          String(lead.status || "").toLowerCase()
-        )
-    );
-
+    const activeLeads = leads.filter((lead) => !isClosedLead(lead));
     const wonLeads = leads.filter(
-      (lead) => String(lead.status || "").toLowerCase() === "won"
+      (lead) => normalizeStatus(lead.status) === "won"
     );
 
-    const pipelineValue = activeLeads.reduce(
-      (total, lead) => total + (Number(lead.value) || 0),
-      0
+    const pipelineValue = activeLeads.reduce((total, lead) => {
+      const value = Number(lead.value);
+      return total + (Number.isFinite(value) ? value : 0);
+    }, 0);
+
+    const scheduledFollowUps = followUps.filter(
+      (item) => !item.isArchived && !isClosedFollowUp(item)
     );
 
-    const todayFollowUps = followUps.filter((item) => {
-      const status = String(item.status || "Pending").toLowerCase();
-      const dueDate = getFollowUpDate(item);
+    const todayFollowUps = scheduledFollowUps.filter((item) => {
+      const date = parseDate(getFollowUpDate(item));
 
-      if (!dueDate || ["completed", "cancelled"].includes(status)) {
-        return false;
-      }
-
-      const date = new Date(dueDate);
-
-      return (
-        !Number.isNaN(date.getTime()) &&
-        date >= todayStart &&
-        date < tomorrow
-      );
+      return date && date >= todayStart && date < tomorrow;
     });
 
-    const overdueFollowUps = followUps.filter((item) => {
-      const status = String(item.status || "Pending").toLowerCase();
-      const dueDate = getFollowUpDate(item);
+    const overdueFollowUps = scheduledFollowUps.filter((item) => {
+      const date = parseDate(getFollowUpDate(item));
 
-      if (!dueDate || ["completed", "cancelled"].includes(status)) {
-        return false;
-      }
-
-      const date = new Date(dueDate);
-
-      return !Number.isNaN(date.getTime()) && date < todayStart;
+      // Overdue means due before today began. A follow-up due earlier
+      // today is included in today's count, not the overdue count.
+      return date && date < todayStart;
     });
 
     return {
@@ -436,8 +545,6 @@ export default function EmployeeDashboard() {
       pipelineValue,
       todayFollowUps: todayFollowUps.length,
       overdueFollowUps: overdueFollowUps.length,
-      todayStart,
-      tomorrow,
     };
   }, [leads, followUps]);
 
@@ -450,41 +557,30 @@ export default function EmployeeDashboard() {
 
     return followUps
       .filter((item) => {
-        const status = String(item.status || "Pending").toLowerCase();
-        const date = getFollowUpDate(item);
+        if (item.isArchived || isClosedFollowUp(item)) return false;
 
-        return (
-          date &&
-          !Number.isNaN(new Date(date).getTime()) &&
-          new Date(date) >= now &&
-          !["completed", "cancelled"].includes(status)
-        );
+        const date = parseDate(getFollowUpDate(item));
+        return date && date >= now;
       })
       .sort(
         (a, b) =>
-          new Date(getFollowUpDate(a)) -
-          new Date(getFollowUpDate(b))
+          parseDate(getFollowUpDate(a)).getTime() -
+          parseDate(getFollowUpDate(b)).getTime()
       )
       .slice(0, 5);
   }, [followUps]);
 
-  const recentLeads = useMemo(() => {
-    return [...leads]
-      .sort((a, b) => {
-        const dateA = new Date(a.updatedAt || a.createdAt || 0);
-        const dateB = new Date(b.updatedAt || b.createdAt || 0);
-
-        return dateB - dateA;
-      })
-      .slice(0, 5);
-  }, [leads]);
-
-  const todayLabel = new Date().toLocaleDateString("en-IN", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
+  const recentLeads = useMemo(
+    () =>
+      [...leads]
+        .sort((a, b) => {
+          const dateA = parseDate(a.updatedAt || a.createdAt)?.getTime() || 0;
+          const dateB = parseDate(b.updatedAt || b.createdAt)?.getTime() || 0;
+          return dateB - dateA;
+        })
+        .slice(0, 5),
+    [leads]
+  );
 
   // ------------------------------------------------
   // Render
@@ -502,32 +598,39 @@ export default function EmployeeDashboard() {
               Employee Workspace
             </p>
 
-            <h1 className="mt-3 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl lg:text-4xl">
+            <h1 className="mt-3 break-words text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl lg:text-4xl">
               {greeting}, {employeeName}!
             </h1>
 
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
-              Here's your work overview. Stay on top of your leads,
-              customer conversations, and follow-ups.
+              Here's your work overview. Stay on top of your leads, customer
+              conversations, and follow-ups.
             </p>
 
             <p className="mt-4 flex items-center gap-2 text-xs font-medium text-slate-600 sm:text-sm">
               <FiCalendar className="text-blue-600" />
               {todayLabel}
             </p>
+
+            {lastUpdated && (
+              <p className="mt-2 text-xs text-slate-500">
+                Last updated: {lastUpdated.toLocaleTimeString("en-IN", {
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </p>
+            )}
           </div>
 
-          <div className="flex shrink-0 items-center gap-3">
+          <div className="flex shrink-0 flex-wrap items-center gap-3">
             <button
               type="button"
               onClick={handleRefresh}
-              disabled={refreshing}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-white bg-white/80 px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-white disabled:opacity-60"
+              disabled={refreshing || loading}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-white bg-white/80 px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <FiRefreshCw
-                className={refreshing ? "animate-spin" : ""}
-              />
-              Refresh
+              <FiRefreshCw className={refreshing ? "animate-spin" : ""} />
+              {refreshing ? "Refreshing..." : "Refresh"}
             </button>
 
             <button
@@ -536,8 +639,7 @@ export default function EmployeeDashboard() {
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700"
             >
               <FiPlus />
-              <span className="hidden sm:inline">My Leads</span>
-              <span className="sm:hidden">Leads</span>
+              My Leads
             </button>
           </div>
         </div>
@@ -556,7 +658,8 @@ export default function EmployeeDashboard() {
           <button
             type="button"
             onClick={handleRefresh}
-            className="self-start text-sm font-semibold text-amber-800 underline sm:self-auto"
+            disabled={refreshing}
+            className="self-start text-sm font-semibold text-amber-800 underline disabled:opacity-50 sm:self-auto"
           >
             Try again
           </button>
@@ -570,9 +673,8 @@ export default function EmployeeDashboard() {
             <h2 className="text-lg font-bold text-slate-900">
               Your Overview
             </h2>
-
             <p className="mt-1 text-sm text-slate-500">
-              Summary of your available CRM records.
+              Summary of the records returned by your APIs.
             </p>
           </div>
 
@@ -674,11 +776,9 @@ export default function EmployeeDashboard() {
                 type="button"
                 key={action.title}
                 onClick={() => navigate(action.path)}
-                className="group rounded-xl border border-slate-100 bg-white p-4 text-left transition hover:border-blue-200 hover:bg-blue-50/30 hover:shadow-sm"
+                className="group rounded-xl border border-slate-100 bg-white p-4 text-left transition hover:border-blue-200 hover:bg-blue-50/30 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <div
-                  className={`mb-4 inline-flex rounded-xl p-3 ${action.color}`}
-                >
+                <div className={`mb-4 inline-flex rounded-xl p-3 ${action.color}`}>
                   <Icon size={21} />
                 </div>
 
@@ -697,14 +797,14 @@ export default function EmployeeDashboard() {
         </div>
       </section>
 
-      {/* Recent leads and follow-ups */}
+      {/* Recent leads and upcoming follow-ups */}
       <section className="grid grid-cols-1 gap-6 2xl:grid-cols-2">
         {/* Recent leads */}
         <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="p-5 sm:p-6">
             <SectionHeading
               title="Recent Leads"
-              subtitle="Latest lead records returned by your API."
+              subtitle="The latest lead records returned by your API."
               action="View all"
               onAction={() => navigate("/employee/leads")}
             />
@@ -723,21 +823,19 @@ export default function EmployeeDashboard() {
             <EmptyState
               icon={FiUsers}
               title="No leads available"
-              description="When your API returns lead records, your recent leads will appear here."
+              description="Your recent leads will appear here when the leads API returns records."
             />
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[480px] text-left">
+              <table className="w-full min-w-[500px] text-left">
                 <thead className="border-y border-slate-100 bg-slate-50">
                   <tr>
                     <th className="px-5 py-3 text-xs font-semibold text-slate-500">
                       Lead
                     </th>
-
                     <th className="px-4 py-3 text-xs font-semibold text-slate-500">
                       Status
                     </th>
-
                     <th className="px-4 py-3 text-right text-xs font-semibold text-slate-500">
                       Value
                     </th>
@@ -750,12 +848,7 @@ export default function EmployeeDashboard() {
                       key={getLeadId(lead) || index}
                       onClick={() => {
                         const id = getLeadId(lead);
-
-                        if (id) {
-                          navigate(`/employee/leads/${id}`);
-                        } else {
-                          navigate("/employee/leads");
-                        }
+                        navigate(id ? `/employee/leads/${id}` : "/employee/leads");
                       }}
                       className="cursor-pointer transition hover:bg-slate-50"
                     >
@@ -776,7 +869,10 @@ export default function EmployeeDashboard() {
                             </p>
 
                             <p className="mt-1 max-w-48 truncate text-xs text-slate-500">
-                              {lead.company || lead.email || lead.phone || "Lead"}
+                              {lead.company ||
+                                lead.email ||
+                                lead.phone ||
+                                "Lead"}
                             </p>
                           </div>
                         </div>
@@ -833,7 +929,9 @@ export default function EmployeeDashboard() {
             <div className="space-y-1 px-4 pb-4 sm:px-5">
               {upcomingFollowUps.map((item, index) => {
                 const lead =
-                  typeof item.lead === "object" ? item.lead : null;
+                  item.lead && typeof item.lead === "object"
+                    ? item.lead
+                    : null;
 
                 const title =
                   item.title ||
@@ -841,20 +939,19 @@ export default function EmployeeDashboard() {
                   lead?.company ||
                   "Customer follow-up";
 
+                const dueDate = getFollowUpDate(item);
+
                 return (
                   <button
                     type="button"
                     key={item._id || item.id || index}
                     onClick={() => {
-                      if (item._id || item.id) {
-                        navigate(
-                          `/employee/follow-ups/${item._id || item.id}`
-                        );
-                      } else {
-                        navigate("/employee/follow-ups");
-                      }
+                      const id = item._id || item.id;
+                      navigate(
+                        id ? `/employee/follow-ups/${id}` : "/employee/follow-ups"
+                      );
                     }}
-                    className="flex w-full items-start gap-3 rounded-xl p-3 text-left transition hover:bg-slate-50"
+                    className="flex w-full items-start gap-3 rounded-xl p-3 text-left transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <div className="mt-0.5 rounded-xl bg-orange-50 p-3 text-orange-600">
                       <FiClock size={18} />
@@ -867,13 +964,13 @@ export default function EmployeeDashboard() {
 
                       <p className="mt-1 flex items-center gap-1 text-xs text-slate-500">
                         <FiCalendar className="shrink-0" />
-                        {formatDateTime(getFollowUpDate(item))}
+                        {formatDateTime(dueDate)}
                       </p>
 
-                      {lead?.company && (
+                      {(lead?.company || lead?.location) && (
                         <p className="mt-1 flex items-center gap-1 truncate text-xs text-slate-500">
                           <FiMapPin className="shrink-0" />
-                          {lead.company}
+                          {lead.company || lead.location}
                         </p>
                       )}
                     </div>
@@ -893,7 +990,7 @@ export default function EmployeeDashboard() {
         </div>
       </section>
 
-      {/* Employee information */}
+      {/* Employee profile */}
       <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 lg:col-span-2">
           <SectionHeading
@@ -904,7 +1001,7 @@ export default function EmployeeDashboard() {
           />
 
           <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-4">
+            <div className="flex min-w-0 items-center gap-3 rounded-xl bg-slate-50 p-4">
               <div className="rounded-xl bg-blue-50 p-3 text-blue-600">
                 <FiUser size={19} />
               </div>
@@ -917,7 +1014,7 @@ export default function EmployeeDashboard() {
               </div>
             </div>
 
-            <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-4">
+            <div className="flex min-w-0 items-center gap-3 rounded-xl bg-slate-50 p-4">
               <div className="rounded-xl bg-violet-50 p-3 text-violet-600">
                 <FiBriefcase size={19} />
               </div>
@@ -930,7 +1027,7 @@ export default function EmployeeDashboard() {
               </div>
             </div>
 
-            <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-4 sm:col-span-2">
+            <div className="flex min-w-0 items-center gap-3 rounded-xl bg-slate-50 p-4 sm:col-span-2">
               <div className="rounded-xl bg-emerald-50 p-3 text-emerald-600">
                 <FiMail size={19} />
               </div>
@@ -970,9 +1067,9 @@ export default function EmployeeDashboard() {
         </div>
       </section>
 
-      <p className="px-1 text-xs text-slate-400">
-        Dashboard data reflects the records returned by the configured API.
-        Ensure the backend restricts records to the authenticated employee.
+      <p className="px-1 text-xs leading-5 text-slate-400">
+        Dashboard figures are based on the records returned by your configured
+        APIs. Your backend must enforce employee-level access to these records.
       </p>
     </div>
   );
