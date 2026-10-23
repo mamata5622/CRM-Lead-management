@@ -3,9 +3,7 @@ const User = require("../models/userModel");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
-// =====================================
 // GENERATE JWT TOKEN
-// =====================================
 const generateToken = (user) => {
   if (!process.env.JWT_SECRET_KEY) {
     throw new Error("JWT_SECRET_KEY is not configured");
@@ -31,6 +29,8 @@ const userResponse = (user) => ({
   id: user._id.toString(),
   name: user.name,
   email: user.email,
+  phone: user.phone || null,
+  profileImage: user.profileImage || null,
   role: user.role,
 });
 
@@ -40,7 +40,13 @@ const userResponse = (user) => ({
 // =====================================
 const register = async (req, res) => {
   try {
-    const { name, email, password } = req.body || {};
+    const {
+      name,
+      email,
+      phone,
+      profileImage,
+      password,
+    } = req.body || {};
 
     // Validate required fields
     if (
@@ -60,7 +66,7 @@ const register = async (req, res) => {
     const normalizedName = name.trim();
     const normalizedEmail = email.trim().toLowerCase();
 
-    // Validate email format
+    // Correct email validation regex
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     if (!emailRegex.test(normalizedEmail)) {
@@ -70,7 +76,7 @@ const register = async (req, res) => {
       });
     }
 
-    // Validate name length
+    // Validate name
     if (normalizedName.length > 100) {
       return res.status(400).json({
         success: false,
@@ -78,7 +84,68 @@ const register = async (req, res) => {
       });
     }
 
-    // Validate password length
+    // Validate optional phone
+    let normalizedPhone = null;
+
+    if (phone !== undefined && phone !== null && phone !== "") {
+      if (typeof phone !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "Phone number must be a string",
+        });
+      }
+
+      normalizedPhone = phone.trim();
+
+      if (
+        normalizedPhone &&
+        !/^\+?[0-9\s()-]{10,18}$/.test(normalizedPhone)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Please provide a valid phone number",
+        });
+      }
+
+      if (!normalizedPhone) normalizedPhone = null;
+    }
+
+    // Validate optional profile image URL
+    let normalizedProfileImage = null;
+
+    if (
+      profileImage !== undefined &&
+      profileImage !== null &&
+      profileImage !== ""
+    ) {
+      if (typeof profileImage !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "Profile image must be a URL string",
+        });
+      }
+
+      normalizedProfileImage = profileImage.trim();
+
+      if (normalizedProfileImage) {
+        try {
+          const imageUrl = new URL(normalizedProfileImage);
+
+          if (!["http:", "https:"].includes(imageUrl.protocol)) {
+            throw new Error("Invalid protocol");
+          }
+        } catch {
+          return res.status(400).json({
+            success: false,
+            message: "Please provide a valid profile image URL",
+          });
+        }
+      } else {
+        normalizedProfileImage = null;
+      }
+    }
+
+    // Validate password
     if (password.length < 8) {
       return res.status(400).json({
         success: false,
@@ -86,7 +153,6 @@ const register = async (req, res) => {
       });
     }
 
-    // bcrypt supports a maximum of 72 UTF-8 bytes
     if (Buffer.byteLength(password, "utf8") > 72) {
       return res.status(400).json({
         success: false,
@@ -94,7 +160,7 @@ const register = async (req, res) => {
       });
     }
 
-    // Check whether email already exists
+    // Check for existing email
     const existingUser = await User.findOne({
       email: normalizedEmail,
     });
@@ -109,17 +175,19 @@ const register = async (req, res) => {
     // Hash password before saving
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    // Public registration must never create an admin
+    // Public registration can never assign admin or employee role
     const user = await User.create({
       name: normalizedName,
       email: normalizedEmail,
+      phone: normalizedPhone,
+      profileImage: normalizedProfileImage,
       password: hashedPassword,
       role: "user",
     });
 
     return res.status(201).json({
       success: true,
-      message: "Registration successful",
+      message: "Registration successful! Please sign in.",
       user: userResponse(user),
     });
   } catch (error) {
@@ -131,7 +199,6 @@ const register = async (req, res) => {
       });
     }
 
-    // Handle Mongoose validation errors
     if (error.name === "ValidationError") {
       return res.status(400).json({
         success: false,
@@ -156,7 +223,6 @@ const login = async (req, res) => {
   try {
     const { email, password } = req.body || {};
 
-    // Validate required fields
     if (
       typeof email !== "string" ||
       typeof password !== "string" ||
@@ -171,13 +237,11 @@ const login = async (req, res) => {
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    // Explicitly select password if excluded by the model
+    // Password is select:false in the User schema
     const user = await User.findOne({
       email: normalizedEmail,
     }).select("+password");
 
-    // Use a generic message to avoid revealing whether
-    // an email address is registered
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -185,7 +249,6 @@ const login = async (req, res) => {
       });
     }
 
-    // Block inactive accounts
     if (!user.isActive) {
       return res.status(403).json({
         success: false,
@@ -193,7 +256,6 @@ const login = async (req, res) => {
       });
     }
 
-    // Compare submitted password with stored hash
     const passwordMatches = await bcrypt.compare(
       password,
       user.password
@@ -206,10 +268,6 @@ const login = async (req, res) => {
       });
     }
 
-    // Generate token after successful authentication
-    const token = generateToken(user);
-
-    // Redirect based on the role stored in MongoDB
     const role = String(user.role || "user").trim().toLowerCase();
 
     const roleRoutes = {
@@ -223,9 +281,12 @@ const login = async (req, res) => {
     if (!redirectTo) {
       return res.status(403).json({
         success: false,
-        message: "Your account role is not recognized. Contact an administrator.",
+        message:
+          "Your account role is not recognized. Contact an administrator.",
       });
     }
+
+    const token = generateToken(user);
 
     return res.status(200).json({
       success: true,

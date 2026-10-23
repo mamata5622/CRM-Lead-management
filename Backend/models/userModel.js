@@ -10,7 +10,7 @@ const userSchema = new mongoose.Schema(
     },
 
     phone: {
-      type: String,
+      type: Number,
       trim: true,
       default: null,
     },
@@ -85,6 +85,39 @@ const userSchema = new mongoose.Schema(
         edit: { type: Boolean, default: false },
         delete: { type: Boolean, default: false },
       },
+    },
+
+    // Email password reset
+    resetPasswordToken: {
+      type: String,
+      select: false,
+    },
+
+    resetPasswordExpires: {
+      type: Date,
+      select: false,
+    },
+
+    // SMS password reset OTP
+    resetOtpHash: {
+      type: String,
+      select: false,
+    },
+
+    resetOtpExpires: {
+      type: Date,
+      select: false,
+    },
+
+    resetOtpAttempts: {
+      type: Number,
+      default: 0,
+      select: false,
+    },
+
+    resetOtpLockedUntil: {
+      type: Date,
+      select: false,
     },
   },
   {

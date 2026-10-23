@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import axios from "axios";
+import { Link, useNavigate } from "react-router";
 import { toast } from "react-toastify";
 import {
   FiUser,
@@ -8,268 +9,351 @@ import {
   FiLock,
   FiEye,
   FiEyeOff,
-  FiArrowRight,
-  FiAlertCircle,
-  FiLoader,
   FiImage,
+  FiArrowRight,
+  FiArrowLeft,
+  FiUserPlus,
+  FiShield,
+  FiCheck,
+  FiX,
 } from "react-icons/fi";
-import { Link, useNavigate } from "react-router";
 
 const API_BASE_URL = import.meta.env.VITE_BASE_URL;
 
+const initialForm = {
+  name: "",
+  phone: "",
+  email: "",
+  profileImage: "",
+  password: "",
+  confirmPassword: "",
+};
+
 const Register = () => {
   const navigate = useNavigate();
-
-  const [formData, setFormData] = useState({
-    name: "",
-    phone: "",
-    email: "",
-    profileImage: "",
-    password: "",
-    confirmPassword: "",
-  });
-
+  const [formData, setFormData] = useState(initialForm);
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [touched, setTouched] = useState({});
+  const [imagePreviewFailed, setImagePreviewFailed] = useState(false);
 
-  // Show an error both inline and through React Toastify.
-  const showError = (message) => {
-    setError(message);
-    toast.error(message);
+  const passwordRules = useMemo(
+    () => [
+      { label: "At least 8 characters", valid: formData.password.length >= 8 },
+      {
+        label: "One uppercase letter",
+        valid: /[A-Z]/.test(formData.password),
+      },
+      {
+        label: "One lowercase letter",
+        valid: /[a-z]/.test(formData.password),
+      },
+      { label: "One number", valid: /[0-9]/.test(formData.password) },
+      {
+        label: "Maximum 72 UTF-8 bytes",
+        valid: new TextEncoder().encode(formData.password).length <= 72,
+      },
+    ],
+    [formData.password],
+  );
+
+  const passwordStrong = passwordRules.every((rule) => rule.valid);
+  const passwordsMatch =
+    formData.confirmPassword.length > 0 &&
+    formData.password === formData.confirmPassword;
+
+  const handleChange = (event) => {
+    const { name, value } = event.target;
+    setFormData((previous) => ({ ...previous, [name]: value }));
+
+    if (name === "profileImage") setImagePreviewFailed(false);
   };
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
-
-    if (error) {
-      setError("");
-    }
+  const handleBlur = (event) => {
+    setTouched((previous) => ({ ...previous, [event.target.name]: true }));
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError("");
+  const getFieldError = (field) => {
+    const value = formData[field];
 
-    const name = formData.name.trim();
-    const phone = formData.phone.trim();
-    const email = formData.email.trim().toLowerCase();
-    const profileImage = formData.profileImage.trim();
-    const password = formData.password;
-    const confirmPassword = formData.confirmPassword;
+    if (!touched[field]) return "";
 
-    // Validate name
-    if (!name) {
-      showError("Please enter your full name.");
-      return;
+    if (field === "name") {
+      if (!value.trim()) return "Full name is required.";
+      if (value.trim().length < 2) return "Enter at least 2 characters.";
+      if (value.trim().length > 100)
+        return "Name cannot exceed 100 characters.";
     }
 
-    if (name.length > 100) {
-      showError("Name cannot exceed 100 characters.");
-      return;
-    }
-
-    // Validate email
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-    if (!emailRegex.test(email)) {
-      showError("Please enter a valid email address.");
-      return;
-    }
-
-    // Validate password
-    if (password.length < 8) {
-      showError("Password must be at least 8 characters.");
-      return;
-    }
-
-    if (new TextEncoder().encode(password).length > 72) {
-      showError("Password cannot exceed 72 bytes.");
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      showError("Passwords do not match.");
-      return;
-    }
-
-    // Validate optional profile image URL
-    if (profileImage) {
-      try {
-        const url = new URL(profileImage);
-
-        if (!["http:", "https:"].includes(url.protocol)) {
-          throw new Error("Invalid URL");
-        }
-      } catch {
-        showError("Please enter a valid profile image URL.");
-        return;
+    if (field === "phone" && value.trim()) {
+      if (!/^\+?[0-9\s()-]{10,18}$/.test(value.trim())) {
+        return "Enter a valid phone number.";
       }
     }
 
-    // Validate API configuration
+    if (field === "email") {
+      if (!value.trim()) return "Email address is required.";
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())) {
+        return "Enter a valid email address.";
+      }
+    }
+
+    if (field === "profileImage" && value.trim()) {
+      try {
+        const url = new URL(value.trim());
+        if (!["http:", "https:"].includes(url.protocol)) {
+          return "Use an HTTP or HTTPS image URL.";
+        }
+      } catch {
+        return "Enter a valid image URL.";
+      }
+    }
+
+    if (field === "password") {
+      if (!value) return "Password is required.";
+      if (value.length < 8) return "Use at least 8 characters.";
+      if (new TextEncoder().encode(value).length > 72) {
+        return "Password cannot exceed 72 UTF-8 bytes.";
+      }
+      if (
+        !/[A-Z]/.test(value) ||
+        !/[a-z]/.test(value) ||
+        !/[0-9]/.test(value)
+      ) {
+        return "Include uppercase, lowercase, and a number.";
+      }
+    }
+
+    if (field === "confirmPassword") {
+      if (!value) return "Please confirm your password.";
+      if (value !== formData.password) return "Passwords do not match.";
+    }
+
+    return "";
+  };
+
+  const validateForm = () => {
+    const allTouched = Object.keys(initialForm).reduce(
+      (result, field) => ({ ...result, [field]: true }),
+      {},
+    );
+    setTouched(allTouched);
+
+    const { name, phone, email, profileImage, password, confirmPassword } =
+      formData;
+
+    if (!name.trim() || name.trim().length < 2 || name.trim().length > 100) {
+      toast.error("Please enter a valid full name.");
+      return false;
+    }
+
+    if (phone.trim() && !/^\+?[0-9\s()-]{10,18}$/.test(phone.trim())) {
+      toast.error("Please enter a valid phone number.");
+      return false;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      toast.error("Please enter a valid email address.");
+      return false;
+    }
+
+    if (profileImage.trim()) {
+      try {
+        const url = new URL(profileImage.trim());
+        if (!["http:", "https:"].includes(url.protocol)) {
+          toast.error("Profile image URL must use HTTP or HTTPS.");
+          return false;
+        }
+      } catch {
+        toast.error("Please enter a valid profile image URL.");
+        return false;
+      }
+    }
+
+    if (!passwordStrong) {
+      toast.error("Please meet all password requirements.");
+      return false;
+    }
+
+    if (password !== confirmPassword) {
+      toast.error("Passwords do not match.");
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (loading || !validateForm()) return;
+
     if (!API_BASE_URL) {
-      showError("API URL is missing. Please check your .env file.");
+      toast.error("API URL is not configured. Check your frontend .env file.");
       return;
     }
 
     setLoading(true);
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/auth/register`, {
-        name,
-        phone: phone || null,
-        email,
-        profileImage: profileImage || null,
-        password,
+      const baseURL = API_BASE_URL.replace(/\/+$/, "");
+      const response = await axios.post(`${baseURL}/auth/register`, {
+        name: formData.name.trim(),
+        phone: formData.phone.trim() || null,
+        email: formData.email.trim().toLowerCase(),
+        profileImage: formData.profileImage.trim() || null,
+        password: formData.password,
       });
 
-      const message = response.data?.message || "Registration successful!";
-      const user = response.data?.user;
+      const data = response.data;
+      const message = data.message || "Registration successful.";
 
-      // If the backend returns a token and user, log them in.
-      if (response.data?.token && user) {
-        localStorage.setItem("token", response.data.token);
-        localStorage.setItem("user", JSON.stringify(user));
+      // Standard registration controller returns a user but no token.
+      // Only create a local session if the backend explicitly returns a token.
+      if (data.token && data.user) {
+        localStorage.setItem("token", data.token);
+        localStorage.setItem("user", JSON.stringify(data.user));
+        window.dispatchEvent(new Event("userUpdated"));
 
-        const role = String(user.role || "user").toLowerCase();
-
-        const roleRoutes = {
+        const role = String(data.user.role || "user").toLowerCase();
+        const destinations = {
           admin: "/admin/dashboard",
           employee: "/employee/dashboard",
           user: "/dashboard",
         };
 
-        const destination =
-          response.data.redirectTo || roleRoutes[role] || "/dashboard";
-
         toast.success(message);
-        navigate(destination, { replace: true });
+        navigate(destinations[role] || "/dashboard", { replace: true });
       } else {
-        // Registration succeeded, but the backend did not return a login token.
         toast.success(message);
-
         navigate("/login", {
           replace: true,
-          state: { registrationMessage: message },
+          state: { registered: true },
         });
       }
-    } catch (err) {
+    } catch (error) {
+      const status = error.response?.status;
       const message =
-        err.response?.data?.message ||
-        err.response?.data?.error ||
-        "Unable to create your account. Please try again.";
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        (status === 409
+          ? "An account with this email already exists."
+          : "Registration failed. Please try again.");
 
-      showError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
   };
 
   const inputClass =
-    "w-full rounded-xl border border-slate-200 bg-white py-3 pl-11 pr-12 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 disabled:cursor-not-allowed disabled:opacity-60";
+    "w-full rounded-xl border border-slate-200 bg-white py-3 pl-11 pr-4 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-50";
+  const iconClass =
+    "pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400";
 
-  const labelClass = "mb-2 block text-sm font-medium text-slate-700";
+  const renderError = (field) => {
+    const error = getFieldError(field);
+    return error ? (
+      <p className="mt-1.5 text-xs text-rose-600" role="alert">
+        {error}
+      </p>
+    ) : null;
+  };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-8 sm:px-6">
-      <div className="grid w-full max-w-5xl overflow-hidden rounded-3xl bg-white shadow-xl shadow-slate-200/70 lg:grid-cols-2">
-        {/* Left panel */}
-        <div className="relative hidden flex-col justify-between overflow-hidden bg-indigo-600 p-10 text-white lg:flex">
-          <div className="absolute -right-20 -top-20 h-72 w-72 rounded-full bg-white/10" />
-          <div className="absolute -bottom-24 -left-20 h-80 w-80 rounded-full bg-indigo-500/70" />
+    <main className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 lg:px-8">
+      <Link
+        to="/"
+        className="fixed left-4 top-4 z-50 inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white/95 px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm transition-all hover:-translate-y-0.5 hover:border-indigo-300 hover:text-indigo-600 hover:shadow-md sm:left-6 sm:top-6"
+      >
+        <FiArrowLeft className="h-4 w-4" />
+        Back to Home
+      </Link>
+      <div className="mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl overflow-hidden rounded-3xl bg-white shadow-xl shadow-slate-200/60 lg:grid-cols-2">
+        <aside className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-indigo-950 via-indigo-900 to-violet-800 p-10 text-white lg:flex xl:p-14">
+          <div className="absolute -right-24 -top-24 h-80 w-80 rounded-full border border-white/10" />
+          <div className="absolute -right-12 -top-12 h-56 w-56 rounded-full border border-white/10" />
+          <div className="absolute -bottom-24 -left-20 h-72 w-72 rounded-full bg-violet-500/20 blur-3xl" />
 
           <div className="relative z-10">
-            <div className="mb-12 flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-xl font-bold text-indigo-600">
-                B
-              </div>
-              <span className="text-xl font-bold tracking-wide">
-                BusinessHub
-              </span>
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 ring-1 ring-white/20">
+              <FiUserPlus size={23} />
             </div>
-
-            <p className="mb-3 text-sm font-semibold tracking-widest text-indigo-200">
-              GET STARTED TODAY
-            </p>
-
-            <h1 className="max-w-sm text-4xl font-bold leading-tight">
-              Build your future with BusinessHub.
+            <h1 className="mt-8 text-3xl font-bold tracking-tight xl:text-4xl">
+              ISHA DISHA
             </h1>
-
-            <p className="mt-5 max-w-sm leading-7 text-indigo-100">
-              Create your account to manage your business, connect with
-              opportunities, and access your personalized workspace.
+            <p className="mt-2 text-sm font-medium uppercase tracking-[0.25em] text-indigo-200">
+              Command Center
             </p>
-          </div>
 
-          <div className="relative z-10 rounded-2xl border border-white/20 bg-white/10 p-5">
-            <p className="font-semibold">Simple and secure</p>
-            <p className="mt-1 text-sm text-indigo-100">
-              Join BusinessHub and get started with your personalized business
-              dashboard.
-            </p>
-          </div>
-        </div>
-
-        {/* Registration form */}
-        <div className="px-5 py-8 sm:px-10 sm:py-10 lg:px-12">
-          <div className="mx-auto w-full max-w-md">
-            {/* Mobile logo */}
-            <div className="mb-8 flex items-center gap-3 lg:hidden">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-lg font-bold text-white">
-                B
-              </div>
-              <span className="text-lg font-bold text-slate-800">
-                BusinessHub
-              </span>
+            <div className="mt-12 max-w-md">
+              <h2 className="text-3xl font-semibold leading-tight xl:text-4xl">
+                Build better connections. Grow your business.
+              </h2>
+              <p className="mt-5 text-base leading-7 text-indigo-100">
+                Create your account to manage leads, organize follow-ups, and
+                keep your business relationships moving forward.
+              </p>
             </div>
 
-            {/* Heading */}
-            <div className="mb-7">
-              <p className="mb-2 text-sm font-semibold text-indigo-600">
-                CREATE YOUR ACCOUNT
+            <div className="mt-10 space-y-5">
+              {[
+                "Organize customer relationships",
+                "Track leads and follow-up activities",
+                "Keep business information in one place",
+              ].map((item) => (
+                <div key={item} className="flex items-center gap-3">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-400/20 text-emerald-300">
+                    <FiCheck size={14} />
+                  </span>
+                  <span className="text-sm text-indigo-50">{item}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="relative z-10 flex items-center gap-2 text-xs text-indigo-200">
+            <FiShield size={15} />
+            <span>Secure account registration</span>
+          </div>
+        </aside>
+
+        <section className="flex items-center justify-center px-5 py-8 sm:px-10 lg:px-12 xl:px-16">
+          <div className="w-full max-w-md">
+            <div className="mb-8 lg:hidden">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-200">
+                <FiUserPlus size={23} />
+              </div>
+              <h1 className="mt-4 text-xl font-bold text-slate-900">
+                ISHA DISHA
+              </h1>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-600">
+                Command Center
               </p>
+            </div>
 
-              <h2 className="text-3xl font-bold tracking-tight text-slate-900">
-                Join BusinessHub
+            <header>
+              <p className="text-sm font-semibold text-indigo-600">
+                GET STARTED
+              </p>
+              <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">
+                Create account
               </h2>
-
               <p className="mt-2 text-sm leading-6 text-slate-500">
                 Enter your details below to create your account.
               </p>
-            </div>
+            </header>
 
-            {/* Inline error */}
-            {error && (
-              <div
-                role="alert"
-                aria-live="polite"
-                className="mb-6 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
-              >
-                <FiAlertCircle className="mt-0.5 shrink-0" size={18} />
-                <p>{error}</p>
-              </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Full name */}
+            <form onSubmit={handleSubmit} noValidate className="mt-7 space-y-4">
               <div>
-                <label htmlFor="name" className={labelClass}>
-                  Full name
+                <label
+                  htmlFor="name"
+                  className="mb-1.5 block text-sm font-medium text-slate-700"
+                >
+                  Full name <span className="text-rose-500">*</span>
                 </label>
-
                 <div className="relative">
-                  <FiUser
-                    className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-                    size={18}
-                  />
-
+                  <FiUser className={iconClass} size={17} />
                   <input
                     id="name"
                     name="name"
@@ -278,26 +362,52 @@ const Register = () => {
                     placeholder="Enter your full name"
                     value={formData.name}
                     onChange={handleChange}
+                    onBlur={handleBlur}
                     className={inputClass}
                     maxLength={100}
                     required
-                    disabled={loading}
+                    aria-invalid={Boolean(getFieldError("name"))}
                   />
                 </div>
+                {renderError("name")}
               </div>
 
-              {/* Email */}
               <div>
-                <label htmlFor="email" className={labelClass}>
-                  Email address
+                <label
+                  htmlFor="phone"
+                  className="mb-1.5 block text-sm font-medium text-slate-700"
+                >
+                  Phone number{" "}
+                  <span className="font-normal text-slate-400">(optional)</span>
                 </label>
-
                 <div className="relative">
-                  <FiMail
-                    className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-                    size={18}
+                  <FiPhone className={iconClass} size={17} />
+                  <input
+                    id="phone"
+                    name="phone"
+                    type="tel"
+                    autoComplete="tel"
+                    placeholder="e.g. +91 9876543210"
+                    value={formData.phone}
+                    onChange={handleChange}
+                    onBlur={handleBlur}
+                    className={inputClass}
+                    maxLength={18}
+                    aria-invalid={Boolean(getFieldError("phone"))}
                   />
+                </div>
+                {renderError("phone")}
+              </div>
 
+              <div>
+                <label
+                  htmlFor="email"
+                  className="mb-1.5 block text-sm font-medium text-slate-700"
+                >
+                  Email address <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative">
+                  <FiMail className={iconClass} size={17} />
                   <input
                     id="email"
                     name="email"
@@ -306,104 +416,95 @@ const Register = () => {
                     placeholder="you@example.com"
                     value={formData.email}
                     onChange={handleChange}
+                    onBlur={handleBlur}
                     className={inputClass}
+                    maxLength={254}
                     required
-                    disabled={loading}
+                    aria-invalid={Boolean(getFieldError("email"))}
                   />
                 </div>
+                {renderError("email")}
               </div>
 
-              {/* Phone */}
               <div>
-                <label htmlFor="phone" className={labelClass}>
-                  Phone number
-                  <span className="ml-1 font-normal text-slate-400">
-                    (Optional)
-                  </span>
+                <label
+                  htmlFor="profileImage"
+                  className="mb-1.5 block text-sm font-medium text-slate-700"
+                >
+                  Profile image URL{" "}
+                  <span className="font-normal text-slate-400">(optional)</span>
                 </label>
-
                 <div className="relative">
-                  <FiPhone
-                    className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-                    size={18}
-                  />
-
-                  <input
-                    id="phone"
-                    name="phone"
-                    type="tel"
-                    autoComplete="tel"
-                    placeholder="Enter your phone number"
-                    value={formData.phone}
-                    onChange={handleChange}
-                    className={inputClass}
-                    disabled={loading}
-                  />
-                </div>
-              </div>
-
-              {/* Profile image */}
-              <div>
-                <label htmlFor="profileImage" className={labelClass}>
-                  Profile image URL
-                  <span className="ml-1 font-normal text-slate-400">
-                    (Optional)
-                  </span>
-                </label>
-
-                <div className="relative">
-                  <FiImage
-                    className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-                    size={18}
-                  />
-
+                  <FiImage className={iconClass} size={17} />
                   <input
                     id="profileImage"
                     name="profileImage"
                     type="url"
-                    placeholder="https://example.com/image.jpg"
+                    placeholder="https://example.com/photo.jpg"
                     value={formData.profileImage}
                     onChange={handleChange}
+                    onBlur={handleBlur}
                     className={inputClass}
-                    disabled={loading}
+                    aria-invalid={Boolean(getFieldError("profileImage"))}
                   />
                 </div>
+                {renderError("profileImage")}
+                {formData.profileImage.trim() &&
+                  !getFieldError("profileImage") && (
+                    <div className="mt-3 flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
+                      {imagePreviewFailed ? (
+                        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-200 text-slate-500">
+                          <FiImage size={18} />
+                        </div>
+                      ) : (
+                        <img
+                          src={formData.profileImage.trim()}
+                          alt="Profile preview"
+                          referrerPolicy="no-referrer"
+                          className="h-11 w-11 rounded-full border border-slate-200 object-cover"
+                          onError={() => setImagePreviewFailed(true)}
+                        />
+                      )}
+                      <span className="text-xs text-slate-500">
+                        {imagePreviewFailed
+                          ? "Image preview unavailable"
+                          : "Profile image preview"}
+                      </span>
+                    </div>
+                  )}
               </div>
 
-              {/* Password */}
               <div>
-                <label htmlFor="password" className={labelClass}>
-                  Password
+                <label
+                  htmlFor="password"
+                  className="mb-1.5 block text-sm font-medium text-slate-700"
+                >
+                  Password <span className="text-rose-500">*</span>
                 </label>
-
                 <div className="relative">
-                  <FiLock
-                    className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-                    size={18}
-                  />
-
+                  <FiLock className={iconClass} size={17} />
                   <input
                     id="password"
                     name="password"
                     type={showPassword ? "text" : "password"}
                     autoComplete="new-password"
-                    placeholder="Minimum 8 characters"
+                    placeholder="Create a strong password"
                     value={formData.password}
                     onChange={handleChange}
-                    className={inputClass}
+                    onBlur={handleBlur}
+                    className={`${inputClass} pr-12`}
                     minLength={8}
+                    maxLength={72}
                     required
-                    disabled={loading}
+                    aria-invalid={Boolean(getFieldError("password"))}
                   />
-
                   <button
                     type="button"
-                    onClick={() => setShowPassword((prev) => !prev)}
+                    onClick={() => setShowPassword((value) => !value)}
                     aria-label={
                       showPassword ? "Hide password" : "Show password"
                     }
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-slate-700"
-                    disabled={loading}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-indigo-600"
                   >
                     {showPassword ? (
                       <FiEyeOff size={18} />
@@ -412,87 +513,127 @@ const Register = () => {
                     )}
                   </button>
                 </div>
+
+                {formData.password && (
+                  <div className="mt-3 rounded-xl bg-slate-50 p-3">
+                    <p className="mb-2 text-xs font-semibold text-slate-600">
+                      Password requirements
+                    </p>
+                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                      {passwordRules.map((rule) => (
+                        <div
+                          key={rule.label}
+                          className={`flex items-center gap-2 text-xs ${
+                            rule.valid ? "text-emerald-700" : "text-slate-500"
+                          }`}
+                        >
+                          {rule.valid ? (
+                            <FiCheck size={13} />
+                          ) : (
+                            <FiX size={13} />
+                          )}
+                          <span>{rule.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {renderError("password")}
               </div>
 
-              {/* Confirm password */}
               <div>
-                <label htmlFor="confirmPassword" className={labelClass}>
-                  Confirm password
+                <label
+                  htmlFor="confirmPassword"
+                  className="mb-1.5 block text-sm font-medium text-slate-700"
+                >
+                  Confirm password <span className="text-rose-500">*</span>
                 </label>
-
                 <div className="relative">
-                  <FiLock
-                    className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-                    size={18}
-                  />
-
+                  <FiLock className={iconClass} size={17} />
                   <input
                     id="confirmPassword"
                     name="confirmPassword"
-                    type={showPassword ? "text" : "password"}
+                    type={showConfirmPassword ? "text" : "password"}
                     autoComplete="new-password"
-                    placeholder="Re-enter your password"
+                    placeholder="Enter your password again"
                     value={formData.confirmPassword}
                     onChange={handleChange}
-                    className={inputClass}
+                    onBlur={handleBlur}
+                    className={`${inputClass} pr-12`}
                     minLength={8}
+                    maxLength={72}
                     required
-                    disabled={loading}
+                    aria-invalid={Boolean(getFieldError("confirmPassword"))}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword((value) => !value)}
+                    aria-label={
+                      showConfirmPassword
+                        ? "Hide confirm password"
+                        : "Show confirm password"
+                    }
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-indigo-600"
+                  >
+                    {showConfirmPassword ? (
+                      <FiEyeOff size={18} />
+                    ) : (
+                      <FiEye size={18} />
+                    )}
+                  </button>
                 </div>
+                {formData.confirmPassword && passwordsMatch && (
+                  <p className="mt-1.5 text-xs text-emerald-600">
+                    Passwords match.
+                  </p>
+                )}
+                {renderError("confirmPassword")}
               </div>
 
-              {/* Password visibility */}
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-500">
-                <input
-                  type="checkbox"
-                  checked={showPassword}
-                  onChange={(e) => setShowPassword(e.target.checked)}
-                  className="h-4 w-4 accent-indigo-600"
-                  disabled={loading}
-                />
-                Show passwords
-              </label>
-
-              {/* Submit */}
               <button
                 type="submit"
                 disabled={loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {loading ? (
                   <>
-                    <FiLoader className="animate-spin" size={18} />
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                     Creating account...
                   </>
                 ) : (
                   <>
-                    Create account
-                    <FiArrowRight size={18} />
+                    Create account <FiArrowRight size={17} />
                   </>
                 )}
               </button>
             </form>
 
-            {/* Login link */}
-            <p className="mt-7 text-center text-sm text-slate-500">
+            <div className="my-6 flex items-center gap-3">
+              <div className="h-px flex-1 bg-slate-200" />
+              <span className="text-xs text-slate-400">
+                ALREADY REGISTERED?
+              </span>
+              <div className="h-px flex-1 bg-slate-200" />
+            </div>
+
+            <p className="text-center text-sm text-slate-600">
               Already have an account?{" "}
               <Link
                 to="/login"
-                className="font-semibold text-indigo-600 transition hover:text-indigo-700"
+                className="font-semibold text-indigo-600 transition hover:text-indigo-800"
               >
                 Sign in
               </Link>
             </p>
 
-            <p className="mt-5 text-center text-xs leading-5 text-slate-400">
-              By creating an account, you agree to your applicable terms of
-              service and privacy policy.
+            <p className="mt-6 text-center text-xs leading-5 text-slate-400">
+              Public registration creates a standard user account. Contact an
+              administrator if you need employee or admin access.
             </p>
           </div>
-        </div>
+        </section>
       </div>
-    </div>
+    </main>
   );
 };
 

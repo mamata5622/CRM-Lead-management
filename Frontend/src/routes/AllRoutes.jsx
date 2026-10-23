@@ -22,6 +22,7 @@ import HelpSupport from "../pages/employee/HelpSupport";
 import Settings from "../pages/employee/Settings";
 import RoleManagement from "../pages/admin/RoleManagement";
 import AdminSettings from "../pages/admin/AdminSettings";
+import ForgotPassword from "../pages/ForgotPassword";
 
 function AllRoutes() {
   return (
@@ -37,6 +38,7 @@ function AllRoutes() {
       {/* Authentication */}
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/forgot-password" element={<ForgotPassword/>} />
 
       {/* Admin pages */}
       <Route path="/admin" element={<AdminLayout />}>
